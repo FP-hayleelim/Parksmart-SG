@@ -1,0 +1,6 @@
+{
+  "name": "ParkSmart SG",
+  "description": "Find real car parks near your destination in Singapore and estimate parking costs before you travel.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
