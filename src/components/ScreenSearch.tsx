@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, MapPin, Navigation, Loader2 } from 'lucide-react';
+import { Search, MapPin, Navigation, Loader2, AlertCircle } from 'lucide-react';
 import { GeocodeResult, SearchParams } from '../types/index.ts';
 
 interface ScreenSearchProps {
@@ -39,16 +39,16 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
   const todayISO = getTodayISODate(now);
   const todayLabel = formatSGDateLabel(now);
 
-  // Form states
+  // Form states: empty destination by default
   const [destinationQuery, setDestinationQuery] = useState(initialParams?.destinationName || '');
   const [selectedLocation, setSelectedLocation] = useState<{
     name: string;
     latitude: number;
     longitude: number;
   } | null>(
-    initialParams?.latitude && initialParams?.longitude
+    initialParams?.latitude && initialParams?.longitude && initialParams?.destinationName
       ? {
-          name: initialParams.destinationName || 'Selected Location',
+          name: initialParams.destinationName,
           latitude: initialParams.latitude,
           longitude: initialParams.longitude
         }
@@ -78,6 +78,7 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
   const [showDropdown, setShowDropdown] = useState(false);
   const [locatingUser, setLocatingUser] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -91,7 +92,7 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
     localStorage.setItem('parksmart_pref_accessible', String(needAccessible));
   }, [needAccessible]);
 
-  // Handle Autocomplete
+  // Handle Autocomplete with OneMap Search API
   useEffect(() => {
     if (!destinationQuery || destinationQuery.length < 2) {
       setSuggestions([]);
@@ -111,7 +112,7 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
     searchDebounceRef.current = setTimeout(async () => {
       setIsSearchingGeo(true);
       try {
-        const resp = await fetch(`/api/geocode?q=${encodeURIComponent(destinationQuery)}`);
+        const resp = await fetch(`/api/geocode?q=${encodeURIComponent(destinationQuery.trim())}`);
         if (resp.ok) {
           const data = await resp.json();
           if (Array.isArray(data.results)) {
@@ -120,7 +121,7 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
           }
         }
       } catch (err) {
-        console.warn('Geocode fetch error:', err);
+        console.warn('OneMap geocode fetch error:', err);
       } finally {
         setIsSearchingGeo(false);
       }
@@ -131,9 +132,11 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
     };
   }, [destinationQuery, selectedLocation]);
 
-  // "Use my location" handler
-  const handleUseMyLocation = () => {
+  // "Near me" handler using browser geolocation + OneMap reverse geocoding
+  const handleNearMe = () => {
     setGeoError(null);
+    setFormError(null);
+
     if (!navigator.geolocation) {
       setGeoError('Geolocation is not supported by your browser.');
       return;
@@ -141,13 +144,27 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
 
     setLocatingUser(true);
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setLocatingUser(false);
+      async (position) => {
         const { latitude, longitude } = position.coords;
-        const name = 'Current Location';
-        setDestinationQuery(name);
+        let placeName = 'Near me (Current Location)';
+
+        try {
+          // Resolve actual Singapore address or building name via reverse geocode
+          const resp = await fetch(`/api/geocode?lat=${latitude}&lng=${longitude}`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data?.results?.[0]?.title) {
+              placeName = data.results[0].title;
+            }
+          }
+        } catch {
+          // Keep coordinates fallback label
+        }
+
+        setLocatingUser(false);
+        setDestinationQuery(placeName);
         setSelectedLocation({
-          name,
+          name: placeName,
           latitude,
           longitude
         });
@@ -156,15 +173,7 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
       (error) => {
         setLocatingUser(false);
         console.warn('Geolocation error:', error.message);
-        // Fallback friendly location if denied or unavailable in sandbox
-        setGeoError('Location access unavailable. Defaulted to Marina Bay Sands.');
-        const fallback = {
-          name: 'Marina Bay Sands',
-          latitude: 1.2842,
-          longitude: 103.8596
-        };
-        setDestinationQuery(fallback.name);
-        setSelectedLocation(fallback);
+        setGeoError('Location access was denied or unavailable. Please search for a place above.');
       },
       { timeout: 7000, enableHighAccuracy: true }
     );
@@ -177,6 +186,7 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
       latitude: item.latitude,
       longitude: item.longitude
     });
+    setFormError(null);
     setShowDropdown(false);
   };
 
@@ -187,27 +197,45 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
     setDateLabel(formatSGDateLabel(target));
   };
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    setFormError(null);
 
-    // If user typed destination without clicking suggestion, use top suggestion or fallback
+    const trimmedQuery = destinationQuery.trim();
+    if (!trimmedQuery && !selectedLocation) {
+      setFormError('Please enter a destination or tap "Near me"');
+      inputRef.current?.focus();
+      return;
+    }
+
     let finalLocation = selectedLocation;
-    if (!finalLocation) {
-      if (suggestions.length > 0) {
-        const top = suggestions[0];
-        finalLocation = {
-          name: top.title,
-          latitude: top.latitude,
-          longitude: top.longitude
-        };
-      } else {
-        // Default to Marina Bay Sands if query matches MBS or empty
-        finalLocation = {
-          name: destinationQuery.trim() || 'Marina Bay Sands',
-          latitude: 1.2842,
-          longitude: 103.8596
-        };
+
+    // If user typed destination without clicking an autocomplete item, resolve it via OneMap
+    if (!finalLocation || finalLocation.name !== trimmedQuery) {
+      setIsSearchingGeo(true);
+      try {
+        const resp = await fetch(`/api/geocode?q=${encodeURIComponent(trimmedQuery)}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (Array.isArray(data.results) && data.results.length > 0) {
+            const top = data.results[0];
+            finalLocation = {
+              name: top.title,
+              latitude: top.latitude,
+              longitude: top.longitude
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('Geocoding resolve failed:', err);
+      } finally {
+        setIsSearchingGeo(false);
       }
+    }
+
+    if (!finalLocation) {
+      setFormError('Destination not found in Singapore. Please select from the search suggestions.');
+      return;
     }
 
     onSearch({
@@ -219,7 +247,8 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
       arrivalTime,
       durationHours,
       needEV,
-      needAccessible
+      needAccessible,
+      radiusMeters: 1000
     });
   };
 
@@ -241,11 +270,15 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
               type="text"
               autoComplete="off"
               value={destinationQuery}
-              onChange={(e) => setDestinationQuery(e.target.value)}
+              onChange={(e) => {
+                setDestinationQuery(e.target.value);
+                setFormError(null);
+                setGeoError(null);
+              }}
               onFocus={() => {
                 if (suggestions.length > 0) setShowDropdown(true);
               }}
-              placeholder="e.g. Marina Bay Sands, Suntec, Bugis"
+              placeholder="Search any place in Singapore"
               className="w-full h-12 pl-10 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700 focus:border-transparent transition-all"
             />
             {isSearchingGeo && (
@@ -273,21 +306,28 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
             </div>
           )}
 
-          {/* Use my location button */}
+          {/* "Near me" button using browser geolocation */}
           <div className="flex items-center justify-between pt-0.5">
             <button
               type="button"
-              onClick={handleUseMyLocation}
+              onClick={handleNearMe}
               disabled={locatingUser}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950 min-h-[44px] -my-2 py-2 px-1 rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-emerald-800"
             >
               <Navigation className={`w-3.5 h-3.5 ${locatingUser ? 'animate-spin' : ''}`} />
-              <span>{locatingUser ? 'Locating…' : 'Use my location'}</span>
+              <span>{locatingUser ? 'Locating…' : 'Near me'}</span>
             </button>
             {geoError && (
               <span className="text-[11px] text-amber-700">{geoError}</span>
             )}
           </div>
+
+          {formError && (
+            <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium pt-1">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
         </div>
 
         {/* 2 & 3. Date & Arrival Time (24-hour) */}

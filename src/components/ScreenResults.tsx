@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Edit2, Map, List, AlertCircle, RefreshCw, ChevronRight, Zap, Accessibility, ChevronDown } from 'lucide-react';
+import { Edit2, Map, List, AlertCircle, RefreshCw, ChevronRight, Zap, Accessibility, ChevronDown, Compass } from 'lucide-react';
 import { Carpark, SearchParams } from '../types/index.ts';
 import MapView from './MapView.tsx';
 
@@ -8,12 +8,12 @@ interface ScreenResultsProps {
   carparks: Carpark[];
   isLoading: boolean;
   isError: boolean;
-  isFallback: boolean;
   onEditSearch: () => void;
   onSelectCarpark: (carpark: Carpark) => void;
   onToggleEV: () => void;
   onToggleAccessible: () => void;
   onRetry: () => void;
+  onExpandRadius: () => void;
 }
 
 export default function ScreenResults({
@@ -21,12 +21,12 @@ export default function ScreenResults({
   carparks,
   isLoading,
   isError,
-  isFallback,
   onEditSearch,
   onSelectCarpark,
   onToggleEV,
   onToggleAccessible,
-  onRetry
+  onRetry,
+  onExpandRadius
 }: ScreenResultsProps) {
   // Mobile view mode: 'list' or 'map'
   const [mobileView, setMobileView] = useState<'list' | 'map'>('list');
@@ -36,6 +36,7 @@ export default function ScreenResults({
 
   const displayedCarparks = showAllCarparks ? carparks : carparks.slice(0, 3);
   const hasMore = carparks.length > 3 && !showAllCarparks;
+  const is2km = (searchParams.radiusMeters || 1000) >= 2000;
 
   return (
     <div className="w-full flex-1 flex flex-col">
@@ -140,24 +141,6 @@ export default function ScreenResults({
         </div>
       )}
 
-      {/* Saved snapshot resilience banner */}
-      {isFallback && !isLoading && !isError && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2">
-          <div className="max-w-6xl mx-auto flex items-center justify-between text-xs text-amber-900 font-medium">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-500" aria-hidden="true" />
-              <span>Showing saved data (live feed backup for Marina Bay Sands)</span>
-            </div>
-            <button
-              onClick={onRetry}
-              className="font-bold underline hover:text-amber-950 min-h-[32px] px-2 flex items-center"
-            >
-              Refresh
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Content Area: Responsive Layout */}
       <div className="flex-1 flex flex-col lg:flex-row max-w-6xl w-full mx-auto">
         
@@ -171,8 +154,10 @@ export default function ScreenResults({
             {isLoading && (
               <div className="py-16 text-center space-y-3">
                 <RefreshCw className="w-8 h-8 text-emerald-700 animate-spin mx-auto" />
-                <p className="text-sm font-semibold text-slate-700">Searching car parks within 1 km…</p>
-                <p className="text-xs text-slate-500">Estimating parking rates and checking lots</p>
+                <p className="text-sm font-semibold text-slate-700">
+                  Searching car parks within {is2km ? '2 km' : '1 km'}…
+                </p>
+                <p className="text-xs text-slate-500">Checking live lots from LTA DataMall</p>
               </div>
             )}
 
@@ -192,25 +177,47 @@ export default function ScreenResults({
               </div>
             )}
 
-            {/* Empty State: "No car parks within 1 km" */}
+            {/* Empty State: If no car parks are found within 1 km, show "No car parks within 1 km" with a button "Search within 2 km" */}
             {!isLoading && !isError && carparks.length === 0 && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3 my-4 shadow-xs">
+              <div className="bg-white rounded-2xl border border-slate-200 p-7 text-center space-y-4 my-4 shadow-xs">
                 <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-xl">
                   🚗
                 </div>
-                <h3 className="text-base font-bold text-slate-900">No car parks within 1 km</h3>
-                <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                  {searchParams.needEV
-                    ? 'No car parks with EV charging found within 1 km. Try turning off the EV filter or searching another area.'
-                    : 'No car parks recorded within 1 km of this destination. Try searching a nearby landmark.'}
-                </p>
-                <button
-                  onClick={onEditSearch}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 transition-colors"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  <span>Change destination</span>
-                </button>
+                
+                <div className="space-y-1">
+                  <h3 className="text-base font-bold text-slate-900">
+                    {is2km ? 'No car parks found within 2 km' : 'No car parks within 1 km'}
+                  </h3>
+                  <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                    {searchParams.needEV
+                      ? 'No car parks with EV charging found in this area. You can try turning off the EV filter or broadening your search.'
+                      : is2km
+                      ? 'No car parks recorded within 2 km of this destination. Try searching another landmark.'
+                      : 'No live car parks found within 1 km of this destination.'}
+                  </p>
+                </div>
+
+                <div className="pt-2 flex flex-col gap-2">
+                  {!is2km && (
+                    <button
+                      type="button"
+                      onClick={onExpandRadius}
+                      className="w-full h-11 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Compass className="w-4 h-4" />
+                      <span>Search within 2 km</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={onEditSearch}
+                    className="w-full h-11 rounded-xl border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Change destination</span>
+                  </button>
+                </div>
               </div>
             )}
 
@@ -259,14 +266,22 @@ export default function ScreenResults({
                           )}
                         </div>
 
-                        {/* Middle row: Large estimated cost & Distance */}
+                        {/* Middle row: Estimated cost (large) or "Rate unavailable" */}
                         <div className="mt-3 flex items-baseline justify-between">
                           <div>
-                            <span className="text-2xl font-extrabold text-slate-900 tabular-nums">
-                              {cp.estimatedCost !== null ? `$${cp.estimatedCost.toFixed(2)}` : 'Rate unavail'}
-                            </span>
-                            {cp.isApproximateRate && cp.estimatedCost !== null && (
-                              <span className="ml-1.5 text-[11px] text-slate-500 font-medium">Approx</span>
+                            {cp.estimatedCost !== null ? (
+                              <>
+                                <span className="text-2xl font-extrabold text-slate-900 tabular-nums">
+                                  ${cp.estimatedCost.toFixed(2)}
+                                </span>
+                                {cp.isApproximateRate && (
+                                  <span className="ml-1.5 text-[11px] text-slate-500 font-medium">Approx</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-lg font-bold text-slate-600">
+                                Rate unavailable
+                              </span>
                             )}
                           </div>
                           
@@ -369,7 +384,7 @@ export default function ScreenResults({
                     <span className="font-extrabold text-slate-900 tabular-nums">
                       {selectedCarparkForMap.estimatedCost !== null
                         ? `$${selectedCarparkForMap.estimatedCost.toFixed(2)}`
-                        : 'Rate unavail'}
+                        : 'Rate unavailable'}
                     </span>
                     <span className="text-slate-500">
                       {selectedCarparkForMap.distanceMeters}m away

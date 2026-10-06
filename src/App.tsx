@@ -4,7 +4,6 @@ import ScreenSearch from './components/ScreenSearch.tsx';
 import ScreenResults from './components/ScreenResults.tsx';
 import ScreenDetail from './components/ScreenDetail.tsx';
 import { Carpark, SearchParams } from './types/index.ts';
-import { getFallbackCarparks } from './data/fallbackSnapshot.ts';
 
 type ScreenState = 'search' | 'results' | 'detail';
 
@@ -15,7 +14,6 @@ export default function App() {
   const [selectedCarpark, setSelectedCarpark] = useState<Carpark | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isError, setIsError] = useState(false);
-  const [isFallback, setIsFallback] = useState(false);
 
   // Fetch carparks from backend API
   const fetchCarparks = useCallback(async (params: SearchParams) => {
@@ -23,10 +21,12 @@ export default function App() {
     setIsError(false);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const radius = params.radiusMeters || 1000;
 
     try {
-      const url = `/api/carparks?lat=${params.latitude}&lng=${params.longitude}&date=${encodeURIComponent(params.dateStr)}&time=${encodeURIComponent(params.arrivalTime)}&duration=${params.durationHours}&ev=${params.needEV ? '1' : '0'}`;
+      const url = `/api/carparks?lat=${params.latitude}&lng=${params.longitude}&date=${encodeURIComponent(params.dateStr)}&time=${encodeURIComponent(params.arrivalTime)}&duration=${params.durationHours}&ev=${params.needEV ? '1' : '0'}&radius=${radius}`;
       
       const response = await fetch(url, {
         signal: controller.signal
@@ -40,29 +40,14 @@ export default function App() {
       const data = await response.json();
       if (Array.isArray(data.carparks)) {
         setCarparks(data.carparks);
-        setIsFallback(Boolean(data.isFallback));
       } else {
         throw new Error('Invalid carparks response format');
       }
     } catch (err: any) {
       clearTimeout(timeoutId);
-      console.warn('API error or timeout, loading saved snapshot for resilience:', err.message);
-      
-      // Fallback resilience: Marina Bay Sands saved snapshot
-      const fallbackList = getFallbackCarparks(
-        params.latitude,
-        params.longitude,
-        params.dateStr,
-        params.arrivalTime,
-        params.durationHours
-      );
-      
-      const filteredFallback = params.needEV
-        ? fallbackList.filter(c => c.evChargers.length > 0)
-        : fallbackList;
-
-      setCarparks(filteredFallback);
-      setIsFallback(true);
+      console.warn('API error fetching carparks:', err.message);
+      setIsError(true);
+      setCarparks([]);
     } finally {
       setIsLoading(false);
     }
@@ -73,6 +58,17 @@ export default function App() {
     setSearchParams(params);
     setCurrentScreen('results');
     fetchCarparks(params);
+  };
+
+  // Expand search radius to 2 km
+  const handleExpandRadius = () => {
+    if (!searchParams) return;
+    const updated: SearchParams = {
+      ...searchParams,
+      radiusMeters: 2000
+    };
+    setSearchParams(updated);
+    fetchCarparks(updated);
   };
 
   // Quick EV filter toggle on Screen 2 summary bar
@@ -97,7 +93,7 @@ export default function App() {
     localStorage.setItem('parksmart_pref_accessible', String(updated.needAccessible));
   };
 
-  // Retry action for resilience
+  // Retry action
   const handleRetry = () => {
     if (searchParams) {
       fetchCarparks(searchParams);
@@ -129,7 +125,6 @@ export default function App() {
             carparks={carparks}
             isLoading={isLoading}
             isError={isError}
-            isFallback={isFallback}
             onEditSearch={() => setCurrentScreen('search')}
             onSelectCarpark={(cp) => {
               setSelectedCarpark(cp);
@@ -138,6 +133,7 @@ export default function App() {
             onToggleEV={handleToggleEV}
             onToggleAccessible={handleToggleAccessible}
             onRetry={handleRetry}
+            onExpandRadius={handleExpandRadius}
           />
         )}
 

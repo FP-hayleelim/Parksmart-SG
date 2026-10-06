@@ -71,6 +71,7 @@ export interface SearchParams {
   durationHours: number; // 2
   needEV: boolean;
   needAccessible: boolean;
+  radiusMeters?: number; // 1000 or 2000
 }
 
 export interface GeocodeResult {
