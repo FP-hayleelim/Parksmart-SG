@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, MapPin, Navigation, Loader2, AlertCircle } from 'lucide-react';
 import { GeocodeResult, SearchParams } from '../types/index.ts';
+import { searchOneMap } from '../services/onemap.ts';
 
 interface ScreenSearchProps {
   onSearch: (params: SearchParams) => void;
@@ -112,16 +113,11 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
     searchDebounceRef.current = setTimeout(async () => {
       setIsSearchingGeo(true);
       try {
-        const resp = await fetch(`/api/geocode?q=${encodeURIComponent(destinationQuery.trim())}`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (Array.isArray(data.results)) {
-            setSuggestions(data.results);
-            setShowDropdown(data.results.length > 0);
-          }
-        }
+        const results = await searchOneMap(destinationQuery);
+        setSuggestions(results);
+        setShowDropdown(results.length > 0);
       } catch (err) {
-        console.warn('OneMap geocode fetch error:', err);
+        console.warn('OneMap search error:', err);
       } finally {
         setIsSearchingGeo(false);
       }
@@ -214,17 +210,14 @@ export default function ScreenSearch({ onSearch, initialParams }: ScreenSearchPr
     if (!finalLocation || finalLocation.name !== trimmedQuery) {
       setIsSearchingGeo(true);
       try {
-        const resp = await fetch(`/api/geocode?q=${encodeURIComponent(trimmedQuery)}`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (Array.isArray(data.results) && data.results.length > 0) {
-            const top = data.results[0];
-            finalLocation = {
-              name: top.title,
-              latitude: top.latitude,
-              longitude: top.longitude
-            };
-          }
+        const results = await searchOneMap(trimmedQuery);
+        if (results.length > 0) {
+          const top = results[0];
+          finalLocation = {
+            name: top.title,
+            latitude: top.latitude,
+            longitude: top.longitude
+          };
         }
       } catch (err) {
         console.warn('Geocoding resolve failed:', err);
