@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import geocodeHandler from './api/geocode.ts';
 import carparksHandler from './api/carparks.ts';
 import evHandler from './api/ev.ts';
+import healthHandler from './api/health.ts';
+import parksmartHandler from './api/parksmart.ts';
 
 dotenv.config();
 
@@ -46,9 +48,23 @@ async function startServer() {
     }
   });
 
+  app.get('/api/parksmart', async (req, res) => {
+    try {
+      await parksmartHandler(req, res);
+    } catch (err: any) {
+      console.error('Error in /api/parksmart:', err);
+      res.status(500).json({ error: err.message || 'Parksmart error' });
+    }
+  });
+
   // Health check
-  app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', service: 'ParkSmart SG' });
+  app.get('/api/health', async (req, res) => {
+    try {
+      await healthHandler(req, res);
+    } catch (err: any) {
+      console.error('Error in /api/health:', err);
+      res.status(500).json({ error: err.message || 'Health error' });
+    }
   });
 
   // Vite middleware in dev or static files in prod
